@@ -27,7 +27,7 @@ class TaskierError(Exception):
 
 
 class Task:
-    con: sqlite3.Connection
+    con: sqlite3.Connection = sqlite3.connect(TaskierDBOption.DB_SQLITE.value)
 
     def __init__(
         self, task_id: str, title: str, desc: str, urgency: int, status=TaskStatus.CREATED, completion_note=""
@@ -58,6 +58,7 @@ class Task:
             cursor.execute(
                 "CREATE TABLE task (task_id text, title text, desc text, urgency integer, status integer, completion_note text);"
             )
+            cls.con.commit()
 
     def save_to_db(self):
         if app_db == TaskierDBOption.DB_CSV.value:
@@ -68,8 +69,9 @@ class Task:
         else:
             with self.con as con:
                 cursor = con.cursor()
-                sql_stmt = "INSERT INTO task VALUES (? ? ? ? ? ?);"
+                sql_stmt = "INSERT INTO task VALUES (?, ?, ?, ?, ?, ?);"
                 cursor.execute(sql_stmt, self._formatted_db_record())
+                con.commit()
 
     def _formatted_db_record(self):
         db_record = (self.task_id, self.title, self.desc, self.urgency, self.status, self.completion_note)
@@ -77,7 +79,7 @@ class Task:
         return db_record
 
     @classmethod
-    def load_task(cls, statuses: list[TaskStatus] = None, urgencies: list[int] = None, content: str = ""):
+    def load_tasks(cls, statuses: list[TaskStatus] = None, urgencies: list[int] = None, content: str = ""):
         tasks = []
 
         if app_db == TaskierDBOption.DB_CSV.value:
@@ -113,10 +115,9 @@ class Task:
                     sql_stmt += f" and ((completion_note LIKE '%{content}%') or (desc LIKE '%{content}%') or (title LIKE '%{content}%'))"
                 cursor = con.cursor()
                 cursor.execute(sql_stmt)
+                con.commit()
                 task_tuple = cursor.fetchall()
                 tasks = [Task(*x) for x in task_tuple]
-
-        return tasks
 
         return tasks
 
@@ -140,8 +141,9 @@ class Task:
                 count_sql = f"SELECT COUNT(*) FROM task WHERE task_id = {self.task_id!r}"
                 row_count = cursor.execute(count_sql).fetchone()[0]
                 if row_count > 0:
-                    sql_stmt = f"UPDATE task SET task_id = ?,title = ?,desc = ?,urgency = ?,status = ?,completion_note = ? WHERE task_id = {self.task_id!r}"
+                    sql_stmt = f"UPDATE task SET task_id = ?, title = ?, desc = ?, urgency = ?,status = ?, completion_note = ? WHERE task_id = {self.task_id!r}"
                     cursor.execute(sql_stmt, self._formatted_db_record())
+                    con.commit()
                 else:
                     raise TaskierError("The task appears to be removed already!")
 
@@ -159,7 +161,8 @@ class Task:
         else:
             with self.con as con:
                 cursor = con.cursor()
-                cursor.execute(f"DELETE FROM task WHERE taski_id = {self.task_id!r}")
+                cursor.execute(f"DELETE FROM task WHERE task_id = {self.task_id!r}")
+                con.commit()
 
     @classmethod
     def load_seed_data(cls):
@@ -167,12 +170,13 @@ class Task:
         task1 = cls.task_from_form_entry("Homework", "Math and Physics", 5)
         task2 = cls.task_from_form_entry("Museum", "Eqypt things", 4)
 
-        with Task.con as con:
+        with sqlite3.connect(TaskierDBOption.DB_SQLITE.value) as con:
             cursor = con.cursor()
             tasks = [task0, task1, task2]
             formatted_records = [task._formatted_db_record() for task in tasks]
-            sql_stmt = "INSERT INTO task VALUES (? ? ? ? ? ?);"
+            sql_stmt = "INSERT INTO task VALUES (?, ?, ?, ?, ?, ?);"
             cursor.executemany(sql_stmt, formatted_records)
+            con.commit()
 
     def __str__(self) -> str:
         stars = "\u2605" * self.urgency
@@ -194,6 +198,6 @@ def set_db_options(option):
     if not db_path.exists():
         if app_db == TaskierDBOption.DB_SQLITE.value:
             Task.create_sqlite_database()
-        Task.load_seed_data()
+            Task.load_seed_data()
     elif app_db == TaskierDBOption.DB_SQLITE.value:
-        Task.con = sqlite3.connect(app_db)
+        Task.con = sqlite3.connect(app_db, check_same_thread=False)
